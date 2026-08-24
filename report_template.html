@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stutter Report &mdash; {{GAME}}</title>
+<style>
+  :root{
+    --paper:#f4f6f4;
+    --grid:#dde4e2;
+    --ink:#16232c;
+    --ink-soft:#5a6b74;
+    --trace:#1f6f8b;
+    --signal:#c2452c;
+    --warn:#b3781f;
+    --ok:#3d7a52;
+    --rule:#c3cdcb;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--paper);
+    background-image:
+      linear-gradient(var(--grid) 1px,transparent 1px),
+      linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+    background-size:22px 22px;
+    color:var(--ink);
+    font-family:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+    font-size:16px;line-height:1.55;
+    padding:0 20px 80px;
+  }
+  .sheet{
+    max-width:940px;margin:0 auto;background:var(--paper);
+    border:1px solid var(--rule);border-top:none;
+    box-shadow:0 1px 0 rgba(0,0,0,.03);
+  }
+  .band{
+    background:var(--ink);color:var(--paper);
+    padding:18px 34px;display:flex;justify-content:space-between;
+    align-items:baseline;flex-wrap:wrap;gap:10px;
+  }
+  .band .id{
+    font-family:Bahnschrift,"DIN Alternate","Segoe UI",sans-serif;
+    font-variation-settings:"wght" 600,"wdth" 87;
+    font-size:13px;letter-spacing:.22em;text-transform:uppercase;
+  }
+  .band .when{font-family:Consolas,"Cascadia Mono",monospace;font-size:12px;opacity:.65}
+  .pad{padding:34px}
+  h1{
+    font-family:Bahnschrift,"DIN Alternate","Segoe UI",sans-serif;
+    font-variation-settings:"wght" 700,"wdth" 87;
+    font-size:clamp(30px,5vw,46px);line-height:1.05;margin:0 0 6px;
+    letter-spacing:-.01em;
+  }
+  .sub{color:var(--ink-soft);font-size:15px;margin:0 0 30px}
+
+  /* signature element: the frametime trace, read like a seismograph strip */
+  .trace{border:1px solid var(--rule);background:#fbfcfb;margin:0 0 8px}
+  .trace svg{display:block;width:100%;height:190px}
+  .tracekey{
+    display:flex;gap:22px;font-family:Consolas,"Cascadia Mono",monospace;
+    font-size:11.5px;color:var(--ink-soft);margin:0 0 34px;flex-wrap:wrap;
+  }
+  .tracekey b{font-weight:400;color:var(--ink)}
+  .swatch{display:inline-block;width:9px;height:9px;margin-right:5px;vertical-align:baseline}
+
+  .verdict{
+    border-left:4px solid var(--ink);padding:2px 0 2px 20px;margin:0 0 34px;
+  }
+  .verdict.good{border-color:var(--ok)}
+  .verdict.bad{border-color:var(--signal)}
+  .verdict.warn{border-color:var(--warn)}
+  .verdict p{margin:0;font-size:20px;line-height:1.4;max-width:60ch}
+
+  .caveat{
+    border:1px solid var(--warn);background:#fdf8ef;
+    padding:16px 20px;margin:0 0 34px;
+  }
+  .caveat b{
+    font-family:Bahnschrift,"DIN Alternate","Segoe UI",sans-serif;
+    font-variation-settings:"wght" 600,"wdth" 87;
+    font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--warn);display:block;margin-bottom:6px;
+  }
+  .caveat p{margin:0;font-size:14.5px;max-width:64ch}
+  .eyebrow{
+    font-family:Bahnschrift,"DIN Alternate","Segoe UI",sans-serif;
+    font-variation-settings:"wght" 600,"wdth" 87;
+    font-size:11.5px;letter-spacing:.2em;text-transform:uppercase;
+    color:var(--ink-soft);border-bottom:1px solid var(--rule);
+    padding-bottom:7px;margin:0 0 20px;
+  }
+  .cause{margin:0 0 26px}
+  .cause .top{display:flex;align-items:baseline;gap:12px;margin-bottom:7px}
+  .cause .pct{
+    font-family:Consolas,"Cascadia Mono",monospace;font-size:15px;
+    min-width:52px;color:var(--ink);
+  }
+  .cause .name{
+    font-family:Bahnschrift,"DIN Alternate","Segoe UI",sans-serif;
+    font-variation-settings:"wght" 600,"wdth" 87;
+    font-size:16.5px;letter-spacing:.02em;
+  }
+  .bar{height:5px;background:var(--grid);margin:0 0 9px;overflow:hidden}
+  .bar i{display:block;height:100%}
+  .cause p{margin:0;color:var(--ink-soft);font-size:14.5px;max-width:66ch}
+
+  table{border-collapse:collapse;width:100%;font-size:13.5px}
+  td{padding:9px 0;border-bottom:1px solid var(--rule)}
+  td:first-child{color:var(--ink-soft)}
+  td:last-child{
+    text-align:right;font-family:Consolas,"Cascadia Mono",monospace;
+  }
+  .spec{margin-top:38px}
+  footer{
+    margin-top:40px;padding-top:16px;border-top:1px solid var(--rule);
+    font-size:12.5px;color:var(--ink-soft);
+  }
+  @media(max-width:620px){
+    body{padding:0 10px 50px}.pad{padding:24px 20px}.band{padding:16px 20px}
+  }
+  @media(prefers-reduced-motion:no-preference){
+    .bar i{animation:grow .7s cubic-bezier(.2,.7,.3,1) both}
+    @keyframes grow{from{transform:scaleX(0);transform-origin:left}}
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <div class="band">
+    <span class="id">Stutter Report</span>
+    <span class="when">{{WHEN}}</span>
+  </div>
+  <div class="pad">
+
+    <h1>{{HEADLINE}}</h1>
+    <p class="sub">{{GAME}} &middot; {{FRAMES}} frames over {{SECONDS}} seconds &middot; about {{FPS}} FPS</p>
+
+    <div class="trace">{{SVG}}</div>
+    <div class="tracekey">
+      <span><span class="swatch" style="background:var(--trace)"></span>frame time</span>
+      <span><span class="swatch" style="background:var(--signal)"></span>stutter</span>
+      <span>typical <b>{{MEDIAN}} ms</b></span>
+      <span>worst <b>{{WORST}} ms</b></span>
+    </div>
+
+    <div class="verdict {{VCLASS}}"><p>{{VERDICT}}</p></div>
+
+    {{CAVEAT}}
+
+    {{CAUSES}}
+
+    <div class="spec">
+      <p class="eyebrow">Measurements</p>
+      <table>
+        <tr><td>Stutters detected</td><td>{{HITCHES}}</td></tr>
+        <tr><td>Playtime lost to stutter</td><td>{{LOSTPCT}}%</td></tr>
+        <tr><td>Typical frame time</td><td>{{MEDIAN}} ms</td></tr>
+        <tr><td>Worst 1% of frames</td><td>{{P99}} ms</td></tr>
+        <tr><td>Shader warm-up pattern</td><td>{{WARMUP}}</td></tr>
+        <tr><td>GPU slowdown over session</td><td>{{DRIFT}}</td></tr>
+        <tr><td>Uneven frame delivery</td><td>{{PACING}}</td></tr>
+        <tr><td>GPU headroom per frame</td><td>{{HEADROOM}}</td></tr>
+        <tr><td>Frame rate capped</td><td>{{CAPPED}}</td></tr>
+      </table>
+    </div>
+
+    <div class="spec">
+      <p class="eyebrow">This machine</p>
+      <table>{{SPECS}}</table>
+    </div>
+
+    <footer>
+      Frame timings captured with Intel PresentMon. Nothing was changed on this
+      PC and nothing was sent anywhere &mdash; this page was written to disk locally.
+    </footer>
+  </div>
+</div>
+</body>
+</html>
