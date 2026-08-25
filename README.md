@@ -84,3 +84,5 @@ in the same folder to run it.
 ## License
 
 MIT. PresentMon is separately MIT licensed by Intel.
+
+Written with AI assistance. The methodology, testing, and validation are mine — see the cold/warm comparison above.
