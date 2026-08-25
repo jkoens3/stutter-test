@@ -4,7 +4,7 @@ Tells you **why** your PC game stutters — and whether it's going to stop.
 
 ### [→ Download it here](https://github.com/jkoens3/stutter-test/releases/latest)
 
-Grab all three files into one folder, then run `StutterTest.exe`.
+Grab all four files into one folder, then run `StutterTest.exe`.
 
 ---
 
@@ -26,9 +26,32 @@ about it. This classifies the cause and gives you a straight answer.
   your GPU is idle part of every frame, stutter physically can't show up, so a
   clean result would be meaningless. It says so instead of pretending you're fine.
 
+## Compare mode — the part that actually proves it
+
+From a **single** recording, this tool is *guessing* that your stutter is
+shader compilation. It infers it from a decay pattern — hitches clustered
+early in the session, falling off as you play. That's a heuristic and it can
+be wrong. Two people pointed this out and they were right.
+
+**Two recordings can prove it**, because the two causes behave differently on
+a repeat run:
+
+| | Shader compilation | Asset streaming |
+|---|---|---|
+| First time through | stutters | stutters |
+| Second time, same route | **gone** — it's cached now | **still there** — happens every time |
+
+So: record, play the same stretch again, record again, hit **Compare two runs**.
+Whatever disappeared was a one-time cost. Whatever came back is the game.
+
+It also works for **settings changes**. Record, change one thing, record again,
+and find out whether that change actually did anything instead of guessing.
+Most performance advice is untested folklore; this is how you check it against
+your own machine.
+
 ## How to use it
 
-1. Download all three files from the [latest release](https://github.com/jkoens3/stutter-test/releases/latest)
+1. Download all four files from the [latest release](https://github.com/jkoens3/stutter-test/releases/latest)
    into one folder
 2. Start your game and get into actual gameplay
 3. Run `StutterTest.exe` — Windows will ask for administrator rights, say yes
@@ -36,53 +59,63 @@ about it. This classifies the cause and gives you a straight answer.
 5. Alt-Tab back into the game and play for a minute — keep moving, go into new
    areas, that's where stutter lives
 6. Read the verdict, or click **Open full report** for the detail
+7. For a real answer rather than an inference, walk the same stretch again,
+   record a second time, and hit **Compare two runs**
 
 ## Is this safe?
 
 Reasonable question for any executable that asks for administrator rights.
 
-- **It's code signed.** Signed through Microsoft Artifact Signing, so Windows
-  shows a verified publisher rather than an unknown one.
-- **VirusTotal: [1 of 71](https://www.virustotal.com/gui/file/8084509ee7dd33506cfa4d57b0cd278b9c8c0ef4869eea0b2fd7a39c03c0ac56)** —
-  a single heuristic flag from one scanner. Every major engine is clean:
-  Microsoft Defender, Kaspersky, BitDefender, ESET, Sophos, Symantec,
-  Malwarebytes, CrowdStrike, Avast, TrendMicro.
+- **It's code signed** through Microsoft Artifact Signing, so Windows shows a
+  verified publisher rather than an unknown one.
+- **VirusTotal: 1 of 69.** A single heuristic flag from one scanner. Microsoft
+  Defender, Kaspersky, BitDefender, ESET, Sophos, Symantec, Malwarebytes,
+  CrowdStrike, Avast and TrendMicro are all clean. (Before signing it was 5 of
+  69 — signing cleared four of them, including Defender.)
+- **The `detect-debug-environment` tag** on VirusTotal is the .NET runtime
+  checking for an attached debugger at startup, which every .NET application
+  does. It isn't in my code — search the source for it.
 - **Why admin:** reading Windows performance traces requires elevation. That's
   the only reason. Same requirement as PresentMon itself, or FPS Monitor.
 - **No overlay, no injection.** Nothing is loaded into the game process. It
   reads trace events the OS already produces. That's also why anti-cheat
   doesn't object — tested against Easy Anti-Cheat.
-- **Nothing leaves your PC.** There is no network code in this application at
-  all. It writes a CSV and an HTML file next to the exe.
+- **No network code at all.** It writes a CSV and an HTML file next to the exe
+  and that's the extent of it.
 - **Nothing is changed.** It doesn't touch your settings, drivers, registry, or
   game files. It only reads.
 
-Full source is in this repo — a single C# file. If you'd rather not run my
-binary, `BUILD.bat` compiles it with the C# compiler already included in
-Windows. Takes about ten seconds and you never have to trust me.
+Full source is in this repo. If you'd rather not run my binary, `BUILD.bat`
+compiles it with the C# compiler already included in Windows. Takes about ten
+seconds and you never have to trust me.
+
+You may still see a SmartScreen warning. That's reputation, not detection —
+signed files still need download history before Windows stops asking.
 
 ## Built with AI assistance
 
 I'm not a C# developer. The code was written with AI, and I'd rather say that
 up front than have it come up later.
 
-What I did do was test it against real captures until it stopped being wrong.
-Several things in here exist because the data contradicted the first version:
+What I did was test it against real captures until it stopped being wrong.
+Most of what's in here exists because the data contradicted the first version:
 
-- It was reporting **+182% GPU thermal throttling** when a scene simply got
-  heavier. Now it compares only the *lightest* frames in each window, and
-  treats anything above 40% as a workload change, because silicon doesn't
-  throttle by multiples.
+- It reported **+182% GPU thermal throttling** when a scene simply got heavier.
+  Now it compares only the *lightest* frames in each window, and treats
+  anything above 40% as a workload change, because silicon doesn't throttle by
+  multiples.
 - It gave a **clean bill of health to a frame-capped test** where stutter
-  physically couldn't appear. Now it measures GPU headroom and refuses to
-  give a verdict when the test can't work.
+  physically couldn't appear. Now it measures GPU headroom and refuses to give
+  a verdict when the test can't work.
 - It **claimed patterns from a handful of hitches**. Now it won't call a trend
   with fewer than 20 relevant data points.
 - It **missed frame pacing entirely**, because uneven frame delivery never
   crosses a hitch threshold. That's now its own detection.
+- It **presented a single-capture guess as a finding**. That's what Compare
+  mode is for.
 
-The methodology and the validation below are mine. Judge it on whether the
-numbers hold up.
+The methodology and the validation are mine. Judge it on whether the numbers
+hold up.
 
 ## How it works
 
@@ -97,7 +130,10 @@ throttling shows up as the lightest frames getting slower over time, and frame
 pacing appears as alternating long/short frames that never trip a hitch
 threshold at all.
 
-### Does it actually work?
+Compare mode then checks those inferences against a second run, which is the
+only way to actually confirm them.
+
+### Does it work?
 
 Same game, same route, twice — once with a cleared shader cache, once after:
 
@@ -105,20 +141,20 @@ Same game, same route, twice — once with a cleared shader cache, once after:
 |---|---|---|
 | Stutters | 34 | 5 |
 | Playtime lost | 1.57% | 0.15% |
+| Worst frame | 107 ms | 32 ms |
 
 The tool predicted 90% of that stutter was shader compilation and would
 disappear. It did. The portion it flagged as **permanent** engine stutter
-stayed within 5% across both runs (94ms vs 90ms).
+stayed within 5% across both runs (94 ms vs 90 ms).
 
-That's a falsifiable prediction, and it held. It's also the thing the tool is
-actually for: telling those two apart while you're playing, when they feel
-identical.
+That's a falsifiable prediction, and it held.
 
 ## Building it yourself
 
-Put `StutterTest.cs`, `app.manifest`, `report_template.html`, and `BUILD.bat`
-in a folder and double-click `BUILD.bat`. It uses the C# compiler already
-included in Windows — no SDK, no Visual Studio.
+Put `StutterTest.cs`, `Compare.cs`, `app.manifest`, `report_template.html`,
+`compare_template.html` and `BUILD.bat` in a folder and double-click
+`BUILD.bat`. It uses the C# compiler already included in Windows — no SDK, no
+Visual Studio.
 
 You'll also need `PresentMon.exe` (from the
 [PresentMon releases](https://github.com/GameTechDev/PresentMon/releases))
@@ -126,12 +162,16 @@ in the same folder to run it.
 
 ## Known limits
 
-- Frame generation (DLSS FG / FSR FG) inserts synthetic frames, which makes
+- **The categories aren't exhaustive.** There's stutter that isn't shader
+  compilation or asset streaming — driver hitches, VRAM thrashing, scheduler
+  problems — and it'll currently get bucketed wrong or lumped into "engine."
+- **When the answer is "the engine," it stops there.** It'll tell you the CPU
+  stalled while the GPU sat idle, but not much more than that. This is the
+  weakest part of the tool and I know it.
+- **Frame generation** (DLSS FG / FSR FG) inserts synthetic frames, which makes
   frame timings mean something different. Results will be unreliable with it on.
-- A 60-second capture can miss stutter that only happens when entering new
+- **A 60-second capture can miss stutter** that only happens when entering new
   areas. Record where the problem actually occurs.
-- When the answer is "the engine," it currently stops there. Making that more
-  specific is the next thing worth building.
 - Tested on DX11, DX12 and Vulkan titles. Very old or unusual renderers may
   report less detail.
 
@@ -140,6 +180,11 @@ in the same folder to run it.
 That's the most useful thing you can send me. Open an issue with the CSV from
 your `results` folder and what you were doing at the time. Every fix listed
 above came from exactly that.
+
+I'm particularly short of captures from machines that actually stutter — older
+GPUs, 8GB cards, laptops, handhelds. Everything I own runs too well, which
+means almost every test I have comes back "nothing wrong here." Correct, and
+useless.
 
 ## License
 
