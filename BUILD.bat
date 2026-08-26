@@ -12,9 +12,30 @@ if not exist "%CSC%" (
     echo Expected it at:
     echo   %WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe
     echo.
-    pause
+    REM --- Code signing (only runs if the 'sign' tool is installed) ---
+REM If you're building from source yourself, this step is skipped
+REM automatically and you'll just get an unsigned exe, which works fine.
+where sign >nul 2>&1
+if %errorlevel%==0 (
+    echo.
+    echo Signing...
+    sign code artifact-signing StutterTest.exe ^
+      --artifact-signing-account stuttertest-signing ^
+      --artifact-signing-certificate-profile stuttertest ^
+      --artifact-signing-endpoint https://cus.codesigning.azure.net/ ^
+      --azure-credential-type azure-cli
+) else (
+    echo.
+    echo [Signing skipped - the 'sign' tool isn't installed.]
+    echo [The exe works fine unsigned, Windows will just warn about it.]
+)
+
+echo.
+pause
     exit /b 1
 )
+
+if exist StutterTest.exe del StutterTest.exe
 
 echo Building StutterTest.exe...
 echo.
@@ -24,7 +45,37 @@ echo.
   /reference:System.Windows.Forms.dll ^
   /reference:System.Drawing.dll ^
   /reference:System.Management.dll ^
-  StutterTest.cs Compare.cs
+  StutterTest.cs Compare.cs Share.cs
+
+if not exist StutterTest.exe (
+    echo.
+    echo ******************************************
+    echo  BUILD FAILED - see the errors above.
+    echo  Nothing was signed. The old exe was removed.
+    echo ******************************************
+    echo.
+    REM --- Code signing (only runs if the 'sign' tool is installed) ---
+REM If you're building from source yourself, this step is skipped
+REM automatically and you'll just get an unsigned exe, which works fine.
+where sign >nul 2>&1
+if %errorlevel%==0 (
+    echo.
+    echo Signing...
+    sign code artifact-signing StutterTest.exe ^
+      --artifact-signing-account stuttertest-signing ^
+      --artifact-signing-certificate-profile stuttertest ^
+      --artifact-signing-endpoint https://cus.codesigning.azure.net/ ^
+      --azure-credential-type azure-cli
+) else (
+    echo.
+    echo [Signing skipped - the 'sign' tool isn't installed.]
+    echo [The exe works fine unsigned, Windows will just warn about it.]
+)
+
+echo.
+pause
+    exit /b 1
+)
 
 if exist StutterTest.exe (
     echo.
@@ -36,16 +87,30 @@ if exist StutterTest.exe (
     echo      StutterTest.exe
     echo      PresentMon.exe
     echo      report_template.html
-      compare_template.html
+    echo      compare_template.html
     echo.
 ) else (
     echo.
     echo Build failed. Check the errors above.
     echo.
 )
+REM --- Code signing (only runs if the 'sign' tool is installed) ---
+REM If you're building from source yourself, this step is skipped
+REM automatically and you'll just get an unsigned exe, which works fine.
+where sign >nul 2>&1
+if %errorlevel%==0 (
+    echo.
+    echo Signing...
+    sign code artifact-signing StutterTest.exe ^
+      --artifact-signing-account stuttertest-signing ^
+      --artifact-signing-certificate-profile stuttertest ^
+      --artifact-signing-endpoint https://cus.codesigning.azure.net/ ^
+      --azure-credential-type azure-cli
+) else (
+    echo.
+    echo [Signing skipped - the 'sign' tool isn't installed.]
+    echo [The exe works fine unsigned, Windows will just warn about it.]
+)
 
 echo.
-echo Signing...
-sign code artifact-signing StutterTest.exe --artifact-signing-account stuttertest-signing --artifact-signing-certificate-profile stuttertest --artifact-signing-endpoint https://cus.codesigning.azure.net/ --azure-credential-type azure-cli
-
 pause
