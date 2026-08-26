@@ -68,7 +68,7 @@ Reasonable question for any executable that asks for administrator rights.
 
 - **It's code signed** through Microsoft Artifact Signing, so Windows shows a
   verified publisher rather than an unknown one.
-- **VirusTotal: 1 of 69.** A single heuristic flag from one scanner. Microsoft
+- **VirusTotal: 1 of 71.** A single heuristic flag from one scanner. Microsoft
   Defender, Kaspersky, BitDefender, ESET, Sophos, Symantec, Malwarebytes,
   CrowdStrike, Avast and TrendMicro are all clean. (Before signing it was 5 of
   69 — signing cleared four of them, including Defender.)
@@ -80,8 +80,10 @@ Reasonable question for any executable that asks for administrator rights.
 - **No overlay, no injection.** Nothing is loaded into the game process. It
   reads trace events the OS already produces. That's also why anti-cheat
   doesn't object — tested against Easy Anti-Cheat.
-- **No network code at all.** It writes a CSV and an HTML file next to the exe
-  and that's the extent of it.
+- **It asks before sending anything.** As of v1.3 there is one network call,
+  and it only happens if you click "Send it" on the prompt after a recording.
+  See [Sharing results](#sharing-results-opt-in) below — it shows you the exact
+  payload before you decide, and "Never ask again" is one click.
 - **Nothing is changed.** It doesn't touch your settings, drivers, registry, or
   game files. It only reads.
 
@@ -91,6 +93,45 @@ seconds and you never have to trust me.
 
 You may still see a SmartScreen warning. That's reputation, not detection —
 signed files still need download history before Windows stops asking.
+
+## Sharing results (opt-in)
+
+**Version 1.3 added a network call. Here is exactly what it does.**
+
+I'm short of captures from PCs that actually stutter. Mine runs everything
+fine, so almost every test I have comes back "nothing wrong here" — correct,
+and useless for working out where the tool gets things wrong.
+
+So after a recording, the app asks whether you'd share the result. It's **off
+until you say yes**, and it shows you the complete payload before you decide.
+Not a description of it — the actual text.
+
+**What gets sent:**
+
+```
+tool version, game exe name, CPU model, GPU model,
+frame count, duration, median frame time, 99th percentile,
+stutter count, % of playtime lost, GPU headroom, frame capped y/n,
+which patterns were detected, ms lost per cause,
+random install ID
+```
+
+**What does not get sent:** file paths, your Windows username, your machine
+name, your IP beyond what any HTTP request reveals, anything about what you
+were doing in the game, or the capture file itself.
+
+**The install ID** is random, generated on your machine, and stored in
+`share-settings.txt` next to the exe. It exists so that ten captures from one
+person don't get counted as ten people. Delete that file and you get a new one.
+
+**Your options** are Send it / Not this time / Never ask again. "Never ask
+again" is permanent. You can also edit `share-settings.txt` directly, or set
+`mode=never` before you ever run it.
+
+**To verify all of this:** it's in `Share.cs`. The payload is built in
+`BuildPayload()` and there is no other network call anywhere in the
+application. If you'd rather not have the capability at all, set `Endpoint`
+to an empty string and rebuild — the prompt then never appears.
 
 ## Built with AI assistance
 
