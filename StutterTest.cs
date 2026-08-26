@@ -416,18 +416,25 @@ namespace StutterTest
             return (s ?? "").Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
         }
 
-        static string Svg(Result r)
+        public static string Svg(Result r) { return Svg(r, 0); }
+
+        // fixedMax > 0 pins the vertical scale, which is essential when two
+        // charts sit side by side: auto-scaling each one would make a calm
+        // run and a terrible run look identical.
+        public static string Svg(Result r, double fixedMax)
         {
             int W = 1000, H = 190, pad = 8;
             if (r.Trace.Count < 2) return "<svg viewBox='0 0 1000 190'></svg>";
-            double hi = r.Trace.Max(), lo = r.Trace.Min();
+            double hi = fixedMax > 0 ? fixedMax : r.Trace.Max();
+            double lo = fixedMax > 0 ? 0 : r.Trace.Min();
             double rng = Math.Max(hi - lo, 1.0);
             var pts = new StringBuilder(); var dots = new StringBuilder();
             int step = Math.Max(1, r.Frames / r.Trace.Count);
             for (int k = 0; k < r.Trace.Count; k++)
             {
                 double x = (double)k / (r.Trace.Count - 1) * W;
-                double y = H - pad - ((r.Trace[k] - lo) / rng) * (H - 2 * pad);
+                double v = fixedMax > 0 ? Math.Min(r.Trace[k], fixedMax) : r.Trace[k];
+                double y = H - pad - ((v - lo) / rng) * (H - 2 * pad);
                 pts.AppendFormat(CultureInfo.InvariantCulture, "{0:0.0},{1:0.0} ", x, y);
                 if (r.HitchAt.Contains(k * step))
                     dots.AppendFormat(CultureInfo.InvariantCulture,
@@ -533,9 +540,15 @@ namespace StutterTest
                 if (lastReport != null) Process.Start(lastReport); };
             Controls.Add(openBtn);
 
-            var folderBtn = new Button {
-                Text = "Open results folder", Location = new Point(180, 418),
+            var cmpBtn = new Button {
+                Text = "Compare two runs", Location = new Point(180, 418),
                 Size = new Size(150, 30), FlatStyle = FlatStyle.System };
+            cmpBtn.Click += CompareRuns;
+            Controls.Add(cmpBtn);
+
+            var folderBtn = new Button {
+                Text = "Results folder", Location = new Point(340, 418),
+                Size = new Size(130, 30), FlatStyle = FlatStyle.System };
             folderBtn.Click += (s, e) => {
                 string d = Path.Combine(exeDir, "results");
                 Directory.CreateDirectory(d); Process.Start(d); };
@@ -702,6 +715,107 @@ namespace StutterTest
             }
         }
 
+        void CompareRuns(object sender, EventArgs e)
+        {
+            string dir = Path.Combine(exeDir, "results");
+            if (!Directory.Exists(dir)) { NoCaptures(); return; }
+            var csvs = Directory.GetFiles(dir, "*.csv")
+                .OrderByDescending(f => File.GetLastWriteTime(f)).ToList();
+            if (csvs.Count < 2) { NoCaptures(); return; }
+
+            string first = Pick("Pick the FIRST run (the 'before')", csvs);
+            if (first == null) return;
+            string second = Pick("Pick the SECOND run (the 'after')",
+                csvs.Where(f => f != first).ToList());
+            if (second == null) return;
+
+            headline.Text = ""; detail.Text = ""; openBtn.Visible = false;
+            status.Text = "Comparing..."; Application.DoEvents();
+
+            try
+            {
+                var ra = Analyzer.Run(first, GuessGame(first));
+                var rb = Analyzer.Run(second, GuessGame(second));
+                if (ra.Frames < 600 || rb.Frames < 600)
+                {
+                    headline.Text = "One of those is too short";
+                    detail.Text = "Both captures need at least 600 frames to compare.";
+                    status.Text = ""; return;
+                }
+                var cmp = Comparison.Run(ra, rb);
+                headline.Text = cmp.Headline;
+                detail.Text = cmp.Verdict +
+                    (string.IsNullOrEmpty(cmp.Caveat) ? "" : "\r\n\r\n" + cmp.Caveat);
+                lastReport = cmp.WriteReport(dir, CompareTemplate);
+                openBtn.Visible = true;
+                status.Text = "Done";
+            }
+            catch (Exception ex)
+            {
+                headline.Text = "Comparison failed";
+                detail.Text = ex.Message; status.Text = "";
+            }
+        }
+
+        void NoCaptures()
+        {
+            MessageBox.Show(
+                "You need at least two recordings to compare.\n\n" +
+                "Record once, then play the same stretch again and record a " +
+                "second time. Whatever stutter disappears was a one-time cost. " +
+                "Whatever comes back is permanent.",
+                "Not enough recordings yet",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        static string GuessGame(string csvPath)
+        {
+            try
+            {
+                using (var sr = new StreamReader(csvPath))
+                {
+                    sr.ReadLine();
+                    string first = sr.ReadLine();
+                    if (first != null) return first.Split(',')[0];
+                }
+            }
+            catch { }
+            return Path.GetFileNameWithoutExtension(csvPath);
+        }
+
+        string Pick(string prompt, System.Collections.Generic.List<string> files)
+        {
+            using (var dlg = new Form())
+            {
+                dlg.Text = prompt;
+                dlg.ClientSize = new Size(460, 300);
+                dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
+                dlg.StartPosition = FormStartPosition.CenterParent;
+                dlg.MaximizeBox = false; dlg.MinimizeBox = false;
+
+                var lb = new ListBox {
+                    Location = new Point(14, 14), Size = new Size(432, 220),
+                    Font = new Font("Segoe UI", 9f) };
+                foreach (var f in files)
+                    lb.Items.Add(Path.GetFileNameWithoutExtension(f) + "   (" +
+                        File.GetLastWriteTime(f).ToString("d MMM  HH:mm") + ")");
+                lb.SelectedIndex = 0;
+                dlg.Controls.Add(lb);
+
+                var ok = new Button { Text = "Use this one", DialogResult = DialogResult.OK,
+                    Location = new Point(266, 248), Size = new Size(100, 28) };
+                var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel,
+                    Location = new Point(372, 248), Size = new Size(74, 28) };
+                dlg.Controls.Add(ok); dlg.Controls.Add(cancel);
+                dlg.AcceptButton = ok; dlg.CancelButton = cancel;
+
+                return dlg.ShowDialog(this) == DialogResult.OK
+                    ? files[lb.SelectedIndex] : null;
+            }
+        }
+
+        public static string CompareTemplate = "";
+
         string SpecsPlain()
         {
             var sb = new StringBuilder();
@@ -748,14 +862,101 @@ namespace StutterTest
 
     static class Program
     {
+        static bool IsElevated()
+        {
+            try
+            {
+                using (var id = System.Security.Principal.WindowsIdentity.GetCurrent())
+                {
+                    var p = new System.Security.Principal.WindowsPrincipal(id);
+                    return p.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+                }
+            }
+            catch { return false; }
+        }
+
         [STAThread]
         static void Main()
         {
-            string dir = Path.GetDirectoryName(Application.ExecutablePath);
-            string tpl = Path.Combine(dir, "report_template.html");
-            Report.Template = File.Exists(tpl) ? File.ReadAllText(tpl) : "<html><body>{{VERDICT}}</body></html>";
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+
+            // The manifest should make Windows prompt for elevation before we
+            // ever get here. If it didn't (manifest stripped, unusual launch
+            // path), say so plainly instead of running and capturing nothing.
+            if (!IsElevated())
+            {
+                var answer = MessageBox.Show(
+                    "Stutter Test needs administrator rights to read Windows " +
+                    "performance data.\n\nThat's the only reason it asks. It " +
+                    "doesn't change any settings and doesn't touch your games.\n\n" +
+                    "Restart as administrator now?",
+                    "Administrator rights needed",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+
+                if (answer == DialogResult.Yes)
+                {
+                    try
+                    {
+                        var psi = new ProcessStartInfo(Application.ExecutablePath) {
+                            UseShellExecute = true, Verb = "runas" };
+                        Process.Start(psi);
+                    }
+                    catch
+                    {
+                        MessageBox.Show(
+                            "Couldn't restart automatically.\n\nClose this, then " +
+                            "right-click StutterTest.exe and choose " +
+                            "\"Run as administrator\".",
+                            "Please restart manually",
+                            MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                }
+                return;
+            }
+
+            string dir = Path.GetDirectoryName(Application.ExecutablePath);
+
+            if (Directory.GetFiles(dir, "PresentMon*.exe").Length == 0)
+            {
+                MessageBox.Show(
+                    "PresentMon.exe isn't in this folder.\n\n" +
+                    "Stutter Test uses Intel's PresentMon to read frame timings. " +
+                    "Download it from the same place you got this app and put " +
+                    "it in the same folder.\n\n" +
+                    "If you unzipped only part of the download, that's usually " +
+                    "the cause.",
+                    "PresentMon is missing",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            string ctpl = Path.Combine(dir, "compare_template.html");
+            MainForm.CompareTemplate = File.Exists(ctpl)
+                ? File.ReadAllText(ctpl)
+                : "<html><body style='font-family:sans-serif;padding:40px'>" +
+                  "<h1>{{HEADLINE}}</h1><p>{{VERDICT}}</p></body></html>";
+
+            string tpl = Path.Combine(dir, "report_template.html");
+            if (File.Exists(tpl))
+            {
+                Report.Template = File.ReadAllText(tpl);
+            }
+            else
+            {
+                MessageBox.Show(
+                    "report_template.html is missing from this folder.\n\n" +
+                    "The app will still work, but the full report won't be " +
+                    "formatted properly. Download it from the same place you " +
+                    "got StutterTest.exe and put it in this folder.",
+                    "Missing file",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                Report.Template = "<html><body style='font-family:sans-serif;" +
+                    "padding:40px'><h1>{{HEADLINE}}</h1><p>{{VERDICT}}</p>" +
+                    "<p><i>report_template.html was missing, so this is a " +
+                    "plain fallback.</i></p></body></html>";
+            }
+
             Application.Run(new MainForm());
         }
     }

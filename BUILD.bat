@@ -20,10 +20,11 @@ echo Building StutterTest.exe...
 echo.
 
 "%CSC%" /target:winexe /out:StutterTest.exe /optimize+ ^
+  /win32manifest:app.manifest ^
   /reference:System.Windows.Forms.dll ^
   /reference:System.Drawing.dll ^
   /reference:System.Management.dll ^
-  StutterTest.cs
+  StutterTest.cs Compare.cs
 
 if exist StutterTest.exe (
     echo.
@@ -35,10 +36,16 @@ if exist StutterTest.exe (
     echo      StutterTest.exe
     echo      PresentMon.exe
     echo      report_template.html
+      compare_template.html
     echo.
 ) else (
     echo.
     echo Build failed. Check the errors above.
     echo.
 )
+
+echo.
+echo Signing...
+sign code artifact-signing StutterTest.exe --artifact-signing-account stuttertest-signing --artifact-signing-certificate-profile stuttertest --artifact-signing-endpoint https://cus.codesigning.azure.net/ --azure-credential-type azure-cli
+
 pause
