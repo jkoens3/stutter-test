@@ -1,0 +1,13 @@
+# Build output
+*.exe
+
+# Per-run captures and generated data (machine-specific, not source)
+results/
+*.csv
+*-system.txt
+
+# Local user settings
+share-settings.txt
+
+# Analyzer debug log
+fgdebug.txt
