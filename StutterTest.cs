@@ -261,17 +261,6 @@ namespace StutterTest
             r.FrameGen = typeSaysFG || gpuOverruns;
             r.Untrustworthy = r.FrameGen || contradictory;
 
-            try
-            {
-                System.IO.File.AppendAllText(@"C:\StutterApp\fgdebug.txt",
-                    string.Format(CultureInfo.InvariantCulture,
-                        "hitch={0:0.00} tail={1:0.00} headroom={2:0.0} spread={3:0.0} " +
-                        "median={4:0.00} genPct={5:0.0} frames={6}\r\n",
-                        hitchShare, tailRatio, r.Headroom, r.Spread, r.Median,
-                        r.GeneratedPct, n));
-            }
-            catch { }
-
             // Detected patterns only mean something if there's stutter to explain.
             // Reporting "your GPU is throttling" to someone with a flawless
             // capture is exactly the crying-wolf behaviour that kills trust.
@@ -787,9 +776,16 @@ namespace StutterTest
                 openBtn.Visible = true;
                 status.Text = "Done — saved to the results folder";
 
+                // No calibrate button in the free build. If enough similar
+                // captures of this game already sit in the results folder,
+                // (re)build the per-game noise profile now, silently. The user
+                // isn't told and doesn't need to be -- it just makes a later
+                // "Compare two runs" able to say "that's inside the noise".
+                var profile = Calibration.AutoUpdate(r, dir);
+
                 // Opt-in only, and only after the user has seen their result.
                 Share.Offer(this, r, Wmi("Win32_Processor", "Name"),
-                            Wmi("Win32_VideoController", "Name"));
+                            Wmi("Win32_VideoController", "Name"), profile);
             }
             catch (Exception ex)
             {

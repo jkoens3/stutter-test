@@ -33,7 +33,7 @@ namespace StutterTest
         // entirely and the prompt never appears.
         public const string Endpoint = "https://script.google.com/macros/s/AKfycbwwQGOTd-2FtdSeRrPrlGsTWkieyicgiZLuMtk-u0HFylZG86tXOLsnyy-VfAg-pJio/exec";
 
-        public const string ToolVersion = "1.3";
+        public const string ToolVersion = "1.4";
 
         static string SettingsPath
         {
@@ -101,7 +101,8 @@ namespace StutterTest
 
         // ---- payload ------------------------------------------------------
 
-        public static string BuildPayload(Result r, string cpu, string gpu, string installId)
+        public static string BuildPayload(Result r, string cpu, string gpu,
+                                          string installId, CalibrationProfile cal)
         {
             var sb = new StringBuilder();
             sb.Append("{");
@@ -110,11 +111,17 @@ namespace StutterTest
             Add(sb, "game", r.Game);
             Add(sb, "cpu", cpu);
             Add(sb, "gpu", gpu);
+            string vendor = GpuVendor(gpu);
+            if (vendor.Length > 0) Add(sb, "gpu_vendor", vendor);
             Num(sb, "frames", r.Frames);
             Num(sb, "duration_s", Math.Round(r.Seconds, 1));
             Num(sb, "median_frametime_ms", Math.Round(r.Median, 2));
             Num(sb, "p99_frametime_ms", Math.Round(r.P99, 2));
+            Num(sb, "spread_pct", Math.Round(r.Spread, 1));
             Num(sb, "hitches", r.Hitches.Count);
+            if (r.Seconds > 0)
+                Num(sb, "hitches_per_min",
+                    Math.Round(r.Hitches.Count / (r.Seconds / 60.0), 2));
             Num(sb, "lost_pct", Math.Round(r.LostPct, 3));
             Num(sb, "gpu_headroom_pct", Math.Round(r.Headroom, 1));
             Add(sb, "frame_capped", r.Capped ? "yes" : "no");
@@ -122,6 +129,18 @@ namespace StutterTest
             Add(sb, "warmup_detected", r.Warmup ? "yes" : "no");
             Add(sb, "throttle_detected", r.Throttle ? "yes" : "no");
             Add(sb, "pacing_detected", r.Pacing ? "yes" : "no");
+
+            // Only present once this machine has enough similar captures of the
+            // game for a profile to exist. It's the noise floor, not anything
+            // about the machine.
+            if (cal != null)
+            {
+                sb.AppendFormat(CultureInfo.InvariantCulture,
+                    "\"calibration\":{{\"noise_band_pct\":{0:0.0},\"runs\":{1}," +
+                    "\"nothing_to_measure\":\"{2}\"}},",
+                    cal.LostPctBand, cal.RunCount,
+                    cal.NothingToMeasure ? "yes" : "no");
+            }
 
             sb.Append("\"causes\":{");
             bool first = true;
@@ -145,19 +164,46 @@ namespace StutterTest
             sb.AppendFormat(CultureInfo.InvariantCulture, "\"{0}\":{1},", k, v);
         }
 
-        // Same data, formatted for a human to read before they consent.
-        public static string Readable(Result r, string cpu, string gpu, string id)
+        // Vendor family only -- "NVIDIA" / "AMD" / "Intel". Coarser than the
+        // model string already in the payload, and deliberately so: this is
+        // for grouping results, not identifying a card. Empty when unknown.
+        static string GpuVendor(string gpu)
+        {
+            string g = (gpu ?? "").ToLowerInvariant();
+            if (g.Contains("nvidia") || g.Contains("geforce") ||
+                g.Contains("rtx") || g.Contains("gtx") || g.Contains("quadro"))
+                return "NVIDIA";
+            if (g.Contains("radeon") || g.Contains("amd") || g.Contains("firepro"))
+                return "AMD";
+            if (g.Contains("intel") || g.Contains("arc ") || g.Contains("iris") ||
+                g.Contains("uhd graphics") || g.Contains("hd graphics"))
+                return "Intel";
+            return "";
+        }
+
+        // Same data, formatted for a human to read before they consent. Every
+        // line here corresponds to something BuildPayload actually sends -- if
+        // you add a field there, add it here too.
+        public static string Readable(Result r, string cpu, string gpu, string id,
+                                      CalibrationProfile cal)
         {
             var sb = new StringBuilder();
             sb.AppendLine("Game:            " + r.Game);
             sb.AppendLine("Processor:       " + cpu);
             sb.AppendLine("Graphics:        " + gpu);
+            string vendor = GpuVendor(gpu);
+            if (vendor.Length > 0)
+                sb.AppendLine("Graphics vendor: " + vendor);
             sb.AppendLine();
             sb.AppendLine("Frames:          " + r.Frames.ToString("N0"));
             sb.AppendLine("Duration:        " + r.Seconds.ToString("0") + " s");
             sb.AppendLine("Typical frame:   " + r.Median.ToString("0.0") + " ms");
             sb.AppendLine("Worst 1%:        " + r.P99.ToString("0.0") + " ms");
+            sb.AppendLine("Spread 10-90%:   " + r.Spread.ToString("0") + "% of typical");
             sb.AppendLine("Stutters:        " + r.Hitches.Count);
+            if (r.Seconds > 0)
+                sb.AppendLine("Stutters/min:    " +
+                    (r.Hitches.Count / (r.Seconds / 60.0)).ToString("0.0"));
             sb.AppendLine("Playtime lost:   " + r.LostPct.ToString("0.00") + "%");
             sb.AppendLine("GPU headroom:    " + r.Headroom.ToString("0") + "%");
             sb.AppendLine("Frame capped:    " + (r.Capped ? "yes" : "no"));
@@ -168,6 +214,16 @@ namespace StutterTest
             foreach (var kv in r.ByCause.OrderByDescending(k => k.Value))
                 sb.AppendLine("   " + kv.Key + ": " + kv.Value.ToString("0") + " ms");
             sb.AppendLine();
+            if (cal != null)
+            {
+                sb.AppendLine("Calibration (this PC's run-to-run noise for this game):");
+                if (cal.NothingToMeasure)
+                    sb.AppendLine("   no stutter worth measuring - band not meaningful");
+                else
+                    sb.AppendLine("   noise band: +/- " + cal.LostPctBand.ToString("0.0") + "%");
+                sb.AppendLine("   built from " + cal.RunCount + " runs");
+                sb.AppendLine();
+            }
             sb.AppendLine("Random install ID: " + id);
             sb.AppendLine("   (so repeat captures from one person aren't counted as many people)");
             sb.AppendLine();
@@ -178,7 +234,8 @@ namespace StutterTest
 
         // ---- consent + send -----------------------------------------------
 
-        public static void Offer(IWin32Window owner, Result r, string cpu, string gpu)
+        public static void Offer(IWin32Window owner, Result r, string cpu, string gpu,
+                                 CalibrationProfile cal)
         {
             if (string.IsNullOrEmpty(Endpoint)) return;   // sharing not configured
             string mode = Mode;
@@ -187,15 +244,20 @@ namespace StutterTest
             string id = InstallId;
             if (string.IsNullOrEmpty(id)) id = NewId();
 
-            if (mode == "always") { Send(BuildPayload(r, cpu, gpu, id)); Save("always", id); return; }
+            if (mode == "always")
+            {
+                Send(BuildPayload(r, cpu, gpu, id, cal));
+                Save("always", id);
+                return;
+            }
 
-            using (var dlg = new ConsentForm(Readable(r, cpu, gpu, id)))
+            using (var dlg = new ConsentForm(Readable(r, cpu, gpu, id, cal)))
             {
                 var res = dlg.ShowDialog(owner);
                 if (res == DialogResult.Cancel) { Save("never", id); return; }
                 if (res == DialogResult.OK)
                 {
-                    Send(BuildPayload(r, cpu, gpu, id));
+                    Send(BuildPayload(r, cpu, gpu, id, cal));
                     Save(dlg.Always ? "always" : "ask", id);
                 }
                 else Save("ask", id);   // "not this time"
@@ -226,7 +288,7 @@ namespace StutterTest
         public ConsentForm(string payload)
         {
             Text = "Share this result?";
-            ClientSize = new Size(520, 520);
+            ClientSize = new Size(520, 580);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent;
             MaximizeBox = false; MinimizeBox = false;
@@ -241,29 +303,29 @@ namespace StutterTest
                        "Here is exactly what would be sent:" });
 
             Controls.Add(new TextBox {
-                Location = new Point(16, 84), Size = new Size(488, 300),
+                Location = new Point(16, 84), Size = new Size(488, 360),
                 Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
                 Font = new Font("Consolas", 9f), Text = payload,
                 BackColor = Color.White });
 
             always = new CheckBox {
-                Location = new Point(16, 394), Size = new Size(488, 22),
+                Location = new Point(16, 454), Size = new Size(488, 22),
                 Text = "Send future results automatically, don't ask again" };
             Controls.Add(always);
 
             Controls.Add(new Label {
-                Location = new Point(16, 420), Size = new Size(488, 34),
+                Location = new Point(16, 480), Size = new Size(488, 34),
                 ForeColor = Color.FromArgb(90, 107, 116),
                 Text = "You can change this any time by editing (or deleting) " +
                        "share-settings.txt next to the app." });
 
             var send = new Button { Text = "Send it", DialogResult = DialogResult.OK,
-                Location = new Point(16, 466), Size = new Size(110, 32),
+                Location = new Point(16, 526), Size = new Size(110, 32),
                 Font = new Font("Segoe UI", 9.5f, FontStyle.Bold) };
             var not = new Button { Text = "Not this time", DialogResult = DialogResult.Ignore,
-                Location = new Point(136, 466), Size = new Size(110, 32) };
+                Location = new Point(136, 526), Size = new Size(110, 32) };
             var never = new Button { Text = "Never ask again", DialogResult = DialogResult.Cancel,
-                Location = new Point(394, 466), Size = new Size(110, 32) };
+                Location = new Point(394, 526), Size = new Size(110, 32) };
 
             send.Click += (s, e) => { Always = always.Checked; };
             Controls.Add(send); Controls.Add(not); Controls.Add(never);

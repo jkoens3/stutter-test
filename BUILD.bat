@@ -45,7 +45,8 @@ echo.
   /reference:System.Windows.Forms.dll ^
   /reference:System.Drawing.dll ^
   /reference:System.Management.dll ^
-  StutterTest.cs Compare.cs Share.cs
+  /reference:System.Runtime.Serialization.dll ^
+  StutterTest.cs Compare.cs Share.cs Calibration.cs
 
 if not exist StutterTest.exe (
     echo.
