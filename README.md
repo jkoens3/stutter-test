@@ -87,10 +87,13 @@ Reasonable question for any executable that asks for administrator rights.
 - **No overlay, no injection.** Nothing is loaded into the game process. It
   reads trace events the OS already produces. That's also why anti-cheat
   doesn't object — tested against Easy Anti-Cheat.
-- **It asks before sending anything.** As of v1.3 there is one network call,
-  and it only happens if you click "Send it" on the prompt after a recording.
-  See [Sharing results](#sharing-results-opt-in) below — it shows you the exact
-  payload before you decide, and "Never ask again" is one click.
+- **It asks before sending anything.** The sharing feature was added after
+  v1.3, but the endpoint was empty until v1.4.1, so no build before v1.4.1
+  could send anything at all. From v1.4.1 the opt-in share is live: one
+  network call, off by default, and it only happens if you click "Send it"
+  on the prompt after a recording. See [Sharing results](#sharing-results-opt-in)
+  below — it shows you the exact payload before you decide, and "Never ask
+  again" is one click.
 - **Nothing is changed.** It doesn't touch your settings, drivers, registry, or
   game files. It only reads.
 
@@ -103,7 +106,11 @@ signed files still need download history before Windows stops asking.
 
 ## Sharing results (opt-in)
 
-**Version 1.3 added a network call. Here is exactly what it does.**
+**v1.4.1 makes one opt-in network call live. Here is exactly what it does.**
+
+The sharing feature was added after v1.3, but its endpoint was empty until
+v1.4.1 — no earlier build could send anything. From v1.4.1 it's active, still
+off until you say yes, and still shows you the payload first.
 
 I'm short of captures from PCs that actually stutter. Mine runs everything
 fine, so almost every test I have comes back "nothing wrong here" — correct,
