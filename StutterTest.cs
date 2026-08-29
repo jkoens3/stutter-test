@@ -28,6 +28,8 @@ namespace StutterTest
         public Dictionary<string, double> ByCause = new Dictionary<string, double>();
         public bool Warmup, Throttle, Pacing;
         public double Drift, R1;
+        public string GpuName = "";       // from the -system.txt sidecar, "" if none
+        public bool IgpuPowerLimited;     // throttle drift, but the GPU looks integrated
         // test validity
         public double Headroom, Spread;
         public bool Capped, TooShort, Untrustworthy;
@@ -42,7 +44,40 @@ namespace StutterTest
 
     public static class Analyzer
     {
-        const int Window = 120;
+        // Rolling-baseline window, measured in milliseconds of wall-clock time
+        // rather than a fixed frame count. A frame-count window's time span
+        // scales inversely with frame rate -- 120 frames is 1.5 s at 80 fps,
+        // but only 0.4 s at 300 fps and 4.8 s at 25 fps -- so how quickly the
+        // baseline re-tracks, and with it what registers as a hitch, silently
+        // depended on how fast the game was running. A fixed time span behaves
+        // the same across the whole range.
+        //
+        // PROVISIONAL. 1500 ms is the anchor: it is what the old Window = 120
+        // meant at 80 fps, roughly the middle of the frame rates this detector
+        // was implicitly tuned on, so mid-fps captures barely move. Raise it
+        // for a steadier baseline (fewer marginal hitches on noisy runs),
+        // lower it to track sustained slowdowns sooner. WindowMaxFrames caps
+        // the buffer so the per-frame median stays cheap at extreme frame
+        // rates; the >= 30 minimum below is unchanged.
+        //
+        // Two things the Pro-side 35-capture validation showed, both open:
+        //
+        //   1. Every hitch-count change in the corpus was DOWNWARD (G1R
+        //      26->24, 14->13; Mouthwashing 7->6). At ~80 fps the time window
+        //      is more reactive during slow patches -- 1500 ms holds only ~90
+        //      frames when frames run 15-18 ms -- so the baseline chases a
+        //      sustained slowdown and marginal hitches sitting next to it drop
+        //      under threshold. That may be the wrong direction: sustained
+        //      rough patches are exactly what players notice most. Revisit if
+        //      captures start under-reporting stutter during slow stretches.
+        //
+        //   2. The low-fps regime is unvalidated. All five 25 fps captures had
+        //      zero hitches, so the largest theoretical change here -- the
+        //      window shrinking from 4.8 s to 1.5 s -- moved nothing. Needs a
+        //      low-fps capture with real stutter before this can be trusted
+        //      at that end.
+        const double WindowMs = 1500.0;
+        const int WindowMaxFrames = 2000;
         const double Ratio = 2.0, AbsMs = 8.0, Share = 0.55, DecayRatio = 2.5;
 
         // Ceiling on the hitch threshold, as a multiple of the local baseline.
@@ -67,6 +102,31 @@ namespace StutterTest
         // hitches.
         const double RatioCap = 3.0;
         const double ThrottleMin = 8.0, ThrottleMax = 40.0, PacingR1 = -0.35;
+
+        // ---- integrated-GPU throttle gate --------------------------------
+        // The early/late GPUBusy comparison assumes the lightest frames do
+        // constant work, so a rise means the silicon slowed. On an Intel
+        // UHD/Iris or an AMD APU that breaks: the iGPU shares one power and
+        // thermal budget with the CPU cores, runs on opportunistic turbo, and
+        // drops to a much lower steady state a few seconds into any sustained
+        // load -- on perfectly cooled hardware. That reads as an 8-40% drift
+        // every time. When the GPU model looks integrated AND the capture
+        // corroborates (GPU pegged the whole run, low frame rate), the
+        // thermal_throttle label is replaced with igpu_power_limit and the
+        // fan advice is dropped.
+        //
+        // All PROVISIONAL -- no integrated-GPU capture to check these against
+        // yet:
+        //   IgpuMaxHeadroomPct  GPU headroom at or below this counts as pegged
+        //   IgpuBoundFrameFrac  a frame is GPU-bound if GPUBusy is at least
+        //                       this fraction of its frame time
+        //   IgpuBoundShareMin   and at least this share of frames must be so
+        //   IgpuMinMedianMs     median frame time at or above this (~45 fps
+        //                       ceiling): the sustained-heavy-load precondition
+        const double IgpuMaxHeadroomPct = 6.0;
+        const double IgpuBoundFrameFrac = 0.90;
+        const double IgpuBoundShareMin  = 0.85;
+        const double IgpuMinMedianMs    = 22.0;
 
         // Minimum typical frame-to-frame swing (median of |clean[i]-clean[i-1]|)
         // before a detected pacing pattern is allowed to add its extra-loss term
@@ -112,6 +172,43 @@ namespace StutterTest
         {
             double d; return double.TryParse(s, NumberStyles.Any,
                 CultureInfo.InvariantCulture, out d) ? d : 0;
+        }
+
+        // GPU model from the <base>-system.txt sidecar the recorder writes.
+        // "" when there is no sidecar (older captures, or a bare CSV).
+        // NOTE: a capture received without its sidecar has no GpuName, so the
+        // iGPU gate can't fire and an integrated-GPU capture stays mislabelled
+        // thermal_throttle.
+        static string GpuFromSidecar(string csvPath)
+        {
+            try
+            {
+                string p = Path.ChangeExtension(csvPath, null) + "-system.txt";
+                if (!File.Exists(p)) return "";
+                foreach (var line in File.ReadAllLines(p))
+                    if (line.StartsWith("GPU:", StringComparison.OrdinalIgnoreCase))
+                        return line.Substring(4).Trim();
+            }
+            catch { }
+            return "";
+        }
+
+        // Heuristic: does this GPU model string look integrated? Intel UHD /
+        // Iris / HD Graphics always are. AMD APU graphics report as
+        // "Radeon(TM) Graphics" or "Radeon Vega N Graphics" -- a "Graphics"
+        // suffix with a Vega tag or no discrete "RX" marker. Intel Arc and
+        // "Radeon RX <number>" are discrete and must not match.
+        static bool LooksIntegrated(string gpu)
+        {
+            if (string.IsNullOrEmpty(gpu)) return false;
+            string g = gpu.ToLowerInvariant();
+            if (g.Contains("arc ")) return false;
+            if (g.Contains("uhd") || g.Contains("iris") || g.Contains("hd graphics"))
+                return true;
+            if (g.Contains("radeon") && g.Contains("graphics") &&
+                (g.Contains("vega") || !g.Contains(" rx ")))
+                return true;
+            return false;
         }
 
         public static Result Run(string csvPath, string game)
@@ -163,6 +260,7 @@ namespace StutterTest
 
             // rolling-baseline hitch detection
             var w = new List<double>(); var wc = new List<double>(); var wg = new List<double>();
+            double wSum = 0;   // running sum of w, so eviction stays O(1) amortised
             for (int i = 0; i < n; i++)
             {
                 if (w.Count >= 30)
@@ -188,7 +286,15 @@ namespace StutterTest
                     }
                 }
                 w.Add(frames[i].Ft); wc.Add(frames[i].Cpu); wg.Add(frames[i].Gpu);
-                if (w.Count > Window) { w.RemoveAt(0); wc.RemoveAt(0); wg.RemoveAt(0); }
+                wSum += frames[i].Ft;
+                // Drop the oldest frames until the buffer spans at most
+                // WindowMs, but never shrink it below the 30-frame minimum the
+                // median gate needs, and never let it grow past WindowMaxFrames.
+                while (w.Count > 30 && (wSum > WindowMs || w.Count > WindowMaxFrames))
+                {
+                    wSum -= w[0];
+                    w.RemoveAt(0); wc.RemoveAt(0); wg.RemoveAt(0);
+                }
             }
 
             int fifth = n / 5;
@@ -224,6 +330,27 @@ namespace StutterTest
                 }
             }
 
+            // Is this drift really thermal, or just an integrated GPU dropping
+            // to its shared-budget steady state? Needs the model string to look
+            // integrated AND the capture to corroborate: GPU pegged the whole
+            // run, and low frame rate (sustained heavy load).
+            r.GpuName = GpuFromSidecar(csvPath);
+            if (r.Throttle && LooksIntegrated(r.GpuName))
+            {
+                int bound = 0, gpuFrames = 0;
+                foreach (var f in frames)
+                    if (f.Gpu > 0)
+                    {
+                        gpuFrames++;
+                        if (f.Gpu >= IgpuBoundFrameFrac * f.Ft) bound++;
+                    }
+                double boundShare = gpuFrames > 0 ? (double)bound / gpuFrames : 0;
+                r.IgpuPowerLimited =
+                    r.Headroom <= IgpuMaxHeadroomPct &&
+                    boundShare >= IgpuBoundShareMin &&
+                    r.Median >= IgpuMinMedianMs;
+            }
+
             // pacing: alternating long/short among clean frames
             var clean = new List<double>();
             for (int i = 0; i < n; i++) if (!r.HitchAt.Contains(i)) clean.Add(frames[i].Ft);
@@ -248,7 +375,8 @@ namespace StutterTest
             foreach (var h in r.Hitches)
             {
                 if (h.Cause == "cpu_stall" && r.Warmup && h.Index < n * 0.4) h.Cause = "shader_warmup";
-                else if (h.Cause == "gpu_spike" && r.Throttle && h.Index > n * 0.6) h.Cause = "thermal_throttle";
+                else if (h.Cause == "gpu_spike" && r.Throttle && h.Index > n * 0.6)
+                    h.Cause = r.IgpuPowerLimited ? "igpu_power_limit" : "thermal_throttle";
                 else if (h.Cause == "present_path" && r.Pacing) h.Cause = "pacing";
             }
 
@@ -339,6 +467,7 @@ namespace StutterTest
             {
                 r.Throttle = false;
                 r.Warmup = false;
+                r.IgpuPowerLimited = false;
             }
 
             BuildVerdict(r);
@@ -355,6 +484,7 @@ namespace StutterTest
                 case "shader_warmup": return "Temporary — this will go away";
                 case "pacing": return "Fixable — frames arriving unevenly";
                 case "thermal_throttle": return "Fixable — your GPU slows as it heats up";
+                case "igpu_power_limit": return "Not fixable — integrated graphics are power-limited for this game";
                 case "present_path": return "Fixable — display or sync problem";
                 case "gpu_spike": return "Partly fixable — graphics settings too high";
                 case "cpu_stall": return "Not fixable — the game's engine";
@@ -369,6 +499,7 @@ namespace StutterTest
                 case "shader_warmup": return "Your graphics card is compiling shaders the first time it meets new effects, then caching them. Replaying the same area should be noticeably smoother, and this usually settles within about 30 minutes of play.";
                 case "pacing": return "Frames are being delivered irregularly rather than taking longer to produce. Cap your frame rate about 3 below your monitor's refresh rate, and turn on G-Sync or FreeSync if your monitor supports it.";
                 case "thermal_throttle": return "The same GPU work took measurably longer late in the session than early on. Check temperatures, clear dust from the fans, or raise the fan curve.";
+                case "igpu_power_limit": return "The same GPU work took longer late in the session than early on, but this looks like integrated graphics — Intel UHD/Iris or an AMD APU. Integrated GPUs share one power and thermal budget with the processor, so a few seconds into sustained load they settle to a lower steady clock and stay there. That is normal for the hardware; cleaning fans or raising the fan curve will not change it. Lowering resolution and in-game settings reduces the load — beyond that, this game asks for more GPU than this chip is built to give.";
                 case "present_path": return "Time was lost outside actual rendering — usually vsync or the Windows compositor. Try exclusive fullscreen and cap your frame rate just below your refresh rate.";
                 case "gpu_spike": return "Your graphics card spiked doing render work. Lower ray tracing, shadow quality, or volumetric effects.";
                 case "cpu_stall": return "Your processor stalled while the graphics card sat idle — typically the game loading assets as you move through the world. No setting on your end changes this. It's how the game was built.";
@@ -385,6 +516,7 @@ namespace StutterTest
             {
                 r.VClass = "warn";
                 r.Warmup = false; r.Throttle = false; r.Pacing = false;
+                r.IgpuPowerLimited = false;
                 r.ByCause.Clear();
 
                 if (r.GeneratedPct > 5.0)
@@ -490,6 +622,7 @@ namespace StutterTest
                 case "shader_warmup": return "your graphics card compiling shaders for the first time, which will stop once they're cached.";
                 case "pacing": return "frames being delivered unevenly rather than taking longer to produce.";
                 case "thermal_throttle": return "your graphics card slowing down as it heats up.";
+                case "igpu_power_limit": return "integrated graphics settling into their power-limited steady state under sustained load — they share a thermal and power budget with the CPU, so cooling will not change it.";
                 case "present_path": return "the display and sync path rather than rendering itself.";
                 case "gpu_spike": return "your graphics card spiking on render work.";
                 case "cpu_stall": return "the game's engine stalling while it loads assets.";
