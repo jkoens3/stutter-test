@@ -55,12 +55,16 @@ namespace StutterTest
         // ~125 fps while staying at 2x below it. Clamping to RatioCap*b bounds
         // sensitivity to a 2x-3x band across the whole frame-rate range.
         //
-        // PROVISIONAL. 3.0 is a guess. It changes nothing below 250 fps (there
-        // the max() term is already <= 3x b), and there is no local capture
-        // above 250 fps with real hitching to check it against. Needs a
-        // high-frame-rate stuttering capture to confirm: raise it if genuine
-        // high-fps hitches get clamped away as clean, lower it if noise at high
-        // fps starts registering as hitches.
+        // PROVISIONAL, but now checked against one real capture. 3.0 changes
+        // nothing below 250 fps (there the max() term is already <= 3x b).
+        // Above it: Mouthwashing at 322 fps (3.107 ms median) was demanding
+        // 3.57x baseline under the old unbounded rule and surfaced only
+        // 2 hitches / 0.070% lost; the 3.0 cap brings that to 7 hitches /
+        // 0.122%. A 2.5 cap would give 12. 3.0 is the conservative choice of
+        // the three, and there is still no perceptual ground truth on which
+        // count is right: raise it if genuine high-fps hitches get clamped
+        // away as clean, lower it if noise at high fps starts registering as
+        // hitches.
         const double RatioCap = 3.0;
         const double ThrottleMin = 8.0, ThrottleMax = 40.0, PacingR1 = -0.35;
 

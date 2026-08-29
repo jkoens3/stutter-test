@@ -1,0 +1,13 @@
+# Normalize line endings: store as LF in the repo, check out native.
+* text=auto
+
+*.cs        text
+*.html      text
+*.manifest  text
+
+# Batch files must stay CRLF to run correctly on Windows.
+*.bat       text eol=crlf
+
+# Harness output is written LF by Harness.cs; keep it LF on disk so a fresh
+# run diffs cleanly against the committed baseline.
+*.tsv       text eol=lf
