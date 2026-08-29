@@ -33,7 +33,7 @@ namespace StutterTest
         // entirely and the prompt never appears.
         public const string Endpoint = "https://script.google.com/macros/s/AKfycbwwQGOTd-2FtdSeRrPrlGsTWkieyicgiZLuMtk-u0HFylZG86tXOLsnyy-VfAg-pJio/exec";
 
-        public const string ToolVersion = "1.4";
+        public const string ToolVersion = "1.4.1";
 
         static string SettingsPath
         {

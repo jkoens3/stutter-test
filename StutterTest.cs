@@ -33,6 +33,7 @@ namespace StutterTest
         public bool Capped, TooShort, Untrustworthy;
         public double GeneratedPct;
         public bool FrameGen;
+        public bool HasFrameType;   // capture carried a FrameType column at all
         public string Caveat = "";
         public List<double> Trace = new List<double>();
         public HashSet<int> HitchAt = new HashSet<int>();
@@ -43,7 +44,48 @@ namespace StutterTest
     {
         const int Window = 120;
         const double Ratio = 2.0, AbsMs = 8.0, Share = 0.55, DecayRatio = 2.5;
+
+        // Ceiling on the hitch threshold, as a multiple of the local baseline.
+        // The threshold is max(Ratio*b, b+AbsMs). AbsMs is a fixed millisecond
+        // floor, so its effective multiple of the baseline is unbounded as the
+        // baseline shrinks: at a 3.2 ms baseline (~310 fps) b+AbsMs is 3.5x b,
+        // and it only climbs from there. Below an 8 ms baseline (125 fps) the
+        // AbsMs term never binds at all and a hitch needs just 2x. So without a
+        // ceiling the detector silently gets stricter and stricter above
+        // ~125 fps while staying at 2x below it. Clamping to RatioCap*b bounds
+        // sensitivity to a 2x-3x band across the whole frame-rate range.
+        //
+        // PROVISIONAL. 3.0 is a guess. It changes nothing below 250 fps (there
+        // the max() term is already <= 3x b), and there is no local capture
+        // above 250 fps with real hitching to check it against. Needs a
+        // high-frame-rate stuttering capture to confirm: raise it if genuine
+        // high-fps hitches get clamped away as clean, lower it if noise at high
+        // fps starts registering as hitches.
+        const double RatioCap = 3.0;
         const double ThrottleMin = 8.0, ThrottleMax = 40.0, PacingR1 = -0.35;
+
+        // Minimum typical frame-to-frame swing (median of |clean[i]-clean[i-1]|)
+        // before a detected pacing pattern is allowed to add its extra-loss term
+        // to ByCause. The R1 gate above confirms the pattern is real but says
+        // nothing about its size; the extra-loss term then sums every clean
+        // frame's excess over the median, so a sub-millisecond ripple across
+        // tens of thousands of frames adds up to a multi-percent "loss" nobody
+        // could feel.
+        //
+        // PROVISIONAL. 0.6 ms, set from the 34-capture local corpus. The two
+        // HL2-uncapped captures at ~289 fps had median swings of 0.45 and
+        // 0.55 ms with R1 of -0.39 / -0.40 (a genuine alternation, but far too
+        // small to perceive) and were the only captures whose R1 cleared the
+        // gate at all. The next-smallest swing anywhere in the corpus was
+        // ~0.64 ms (3DMark Steel Nomad, R1 near zero so gate closed), rising
+        // to ~1.0 ms (G1R, 81 fps) and ~2.2-2.9 ms (Cyberpunk, 23 fps), all of
+        // which should pass. 0.6 splits the 0.55/0.64 gap. Narrow evidence:
+        // needs a mid-fps capture with a genuine pacing pattern in the
+        // ~0.5-1.0 ms range to tension-test, and a fixed millisecond floor is
+        // itself a simplification (the same swing is a larger share of a short
+        // frame than a long one).
+        const double PacingMinSwingMs = 0.6;
+
         const double SeverityFloor = 1.0;
         const int MinHitchPattern = 20;
         const double WarmupMinRate = 3.0;
@@ -84,6 +126,7 @@ namespace StutterTest
                 if (iFt < 0) iFt = Array.IndexOf(cols, "msBetweenPresents");
                 if (iFt < 0) return r;
                 int iType = Array.IndexOf(cols, "FrameType");
+                r.HasFrameType = iType >= 0;
 
                 string line;
                 while ((line = sr.ReadLine()) != null)
@@ -121,7 +164,7 @@ namespace StutterTest
                 if (w.Count >= 30)
                 {
                     double b = Median(w), bc = Median(wc), bg = Median(wg);
-                    double thresh = Math.Max(Ratio * b, b + AbsMs);
+                    double thresh = Math.Min(Math.Max(Ratio * b, b + AbsMs), RatioCap * b);
                     if (frames[i].Ft > thresh)
                     {
                         double lost = frames[i].Ft - b;
@@ -180,15 +223,22 @@ namespace StutterTest
             // pacing: alternating long/short among clean frames
             var clean = new List<double>();
             for (int i = 0; i < n; i++) if (!r.HitchAt.Contains(i)) clean.Add(frames[i].Ft);
+            double pacingSwing = 0;
             if (clean.Count > 600)
             {
                 double mean = clean.Average(), den = 0, num = 0;
+                var swings = new List<double>();
                 for (int i = 0; i < clean.Count; i++)
                 {
                     double d = clean[i] - mean; den += d * d;
-                    if (i < clean.Count - 1) num += d * (clean[i + 1] - mean);
+                    if (i < clean.Count - 1)
+                    {
+                        num += d * (clean[i + 1] - mean);
+                        swings.Add(Math.Abs(clean[i + 1] - clean[i]));
+                    }
                 }
                 if (den > 0) { r.R1 = num / den; r.Pacing = r.R1 <= PacingR1; }
+                pacingSwing = Median(swings);
             }
 
             foreach (var h in r.Hitches)
@@ -203,7 +253,13 @@ namespace StutterTest
                 if (!r.ByCause.ContainsKey(h.Cause)) r.ByCause[h.Cause] = 0;
                 r.ByCause[h.Cause] += h.Lost;
             }
-            if (r.Pacing)
+            // Book the pacing extra-loss term only when the alternation is big
+            // enough to perceive. R1 catches the pattern; PacingMinSwingMs
+            // gates on its size, so an imperceptible sub-millisecond ripple
+            // can't inflate LostPct or drive the verdict. A present_path hitch
+            // relabelled to "pacing" above still counts -- that's a real
+            // discrete hitch, not this accumulator.
+            if (r.Pacing && pacingSwing >= PacingMinSwingMs)
             {
                 double extra = clean.Where(v => v > r.Median).Sum(v => v - r.Median);
                 if (!r.ByCause.ContainsKey("pacing")) r.ByCause["pacing"] = 0;
@@ -241,22 +297,33 @@ namespace StutterTest
             // so ordinary frames start reading as hitches and the whole
             // analysis becomes confident nonsense.
             //
-            // Two fingerprints, and both have to hold:
-            //   * a large share of frames flagged as hitches, while
-            //   * the 99th percentile is nowhere near double the median
-            // Those two facts are contradictory. A hitch has to exceed roughly
-            // 2x the local baseline, so if the worst 1% of frames barely
-            // exceed the median, only a tiny fraction can be genuine hitches.
+            // The direct tell is the FrameType column: PresentMon tags every
+            // generated frame, so when that column is present we know for
+            // certain whether generation is on.
             //
-            // GPU time exceeding frame time (negative headroom) is the other
+            // The "contradictory timings" check below is only a PROXY for that,
+            // for captures with no FrameType column: a large share of frames
+            // flagged as hitches while the 99th percentile is nowhere near 2x
+            // the median. A hitch has to exceed roughly 2x the local baseline,
+            // so if the worst 1% barely exceed the median, only a tiny fraction
+            // can be genuine -- the two facts can't both be true. But at very
+            // high frame rates P99/median is legitimately below 2 for a clean
+            // capture, so this proxy misfires there. Gate it on FrameType being
+            // absent, and require a much larger hitch share: real stutter rarely
+            // flags more than ~3% of frames, frame-gen garbage flags far more.
+            //
+            // GPU time exceeding frame time (negative headroom) is a separate
             // tell, since GPU work is spanning multiple presented frames.
                    double hitchShare = n > 0 ? (double)r.Hitches.Count / n * 100.0 : 0;
             double tailRatio = r.Median > 0 ? r.P99 / r.Median : 0;
-            bool contradictory = hitchShare > 1.5 && tailRatio < 2.0;
 
             r.GeneratedPct = n > 0 ? (double)frames.Count(f => f.Generated) / n * 100.0 : 0;
             bool typeSaysFG = r.GeneratedPct > 5.0;
             bool gpuOverruns = r.Headroom < -10.0;
+
+            bool contradictory = !r.HasFrameType
+                                 && hitchShare > 5.0
+                                 && tailRatio < 2.0;
 
             r.FrameGen = typeSaysFG || gpuOverruns;
             r.Untrustworthy = r.FrameGen || contradictory;
