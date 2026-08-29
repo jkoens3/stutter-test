@@ -51,10 +51,17 @@ your own machine.
 
 ## How to use it
 
-1. Download all four files from the [latest release](https://github.com/jkoens3/stutter-test/releases/latest)
+1. Download all four files — `StutterTest.exe`, `PresentMon.exe`,
+   `report_template.html`, `compare_template.html` — from the
+   [latest release](https://github.com/jkoens3/stutter-test/releases/latest)
    into one folder
 2. Start your game and get into actual gameplay
-3. Run `StutterTest.exe` — Windows will ask for administrator rights, say yes
+3. Run `StutterTest.exe`. On a new release you'll see a **Windows SmartScreen**
+   prompt ("Windows protected your PC") — that's reputation, not detection: a
+   fresh build has no download history yet, so SmartScreen warns until enough
+   people have run it. The file is code signed, so the prompt shows **Jarret
+   Koens** as the publisher, not "Unknown publisher". Click **More info → Run
+   anyway**, then say yes to the administrator-rights prompt.
 4. Click **Find my game**, then **Record**
 5. Alt-Tab back into the game and play for a minute — keep moving, go into new
    areas, that's where stutter lives
@@ -192,10 +199,10 @@ That's a falsifiable prediction, and it held.
 
 ## Building it yourself
 
-Put `StutterTest.cs`, `Compare.cs`, `app.manifest`, `report_template.html`,
-`compare_template.html` and `BUILD.bat` in a folder and double-click
-`BUILD.bat`. It uses the C# compiler already included in Windows — no SDK, no
-Visual Studio.
+Put `StutterTest.cs`, `Compare.cs`, `Share.cs`, `Calibration.cs`,
+`app.manifest`, `report_template.html`, `compare_template.html` and
+`BUILD.bat` in a folder and double-click `BUILD.bat`. It uses the C# compiler
+already included in Windows — no SDK, no Visual Studio.
 
 You'll also need `PresentMon.exe` (from the
 [PresentMon releases](https://github.com/GameTechDev/PresentMon/releases))
