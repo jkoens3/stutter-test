@@ -103,6 +103,19 @@ namespace StutterTest
         const double RatioCap = 3.0;
         const double ThrottleMin = 8.0, ThrottleMax = 40.0, PacingR1 = -0.35;
 
+        // Smallest early 10th-percentile GPUBusy (ms) the throttle drift ratio
+        // is computed from. drift = (late - early) / early, so when the capture
+        // is CPU-bound and the GPU is barely working, `early` is a tiny noisy
+        // number and a sub-millisecond wobble reads as a 20-30% "drift" -- a
+        // false throttle flag. Below this floor, skip the check entirely.
+        //
+        // PROVISIONAL. 3.0 ms is a guess -- the trigger case was Valorant
+        // (CPU-bound, ~2 ms GPUBusy) flagged throttle=yes off pure GPU-time
+        // noise. Raise it if CPU-bound captures still throw false throttle
+        // flags; lower it if a genuinely throttling but lightly-loaded GPU
+        // gets missed.
+        const double ThrottleMinGpuMs = 3.0;
+
         // ---- integrated-GPU throttle gate --------------------------------
         // The early/late GPUBusy comparison assumes the lightest frames do
         // constant work, so a rise means the silicon slowed. On an Intel
@@ -153,6 +166,37 @@ namespace StutterTest
         const double SeverityFloor = 1.0;
         const int MinHitchPattern = 20;
         const double WarmupMinRate = 3.0;
+
+        // Upper counterpart to SeverityFloor. Above this much playtime lost with
+        // cpu_stall dominant, the per-hitch attribution stops being trustworthy:
+        // a normal engine doesn't stall the CPU for 10%+ of a session, and frame
+        // timings alone can't separate a badly-behaved game from a PC problem
+        // (background CPU load, CPU thermal/power throttling, a driver interrupt
+        // storm, a misconfiguration). The verdict switches from asserting "it's
+        // the game" to naming the possibilities and telling the user how to
+        // narrow it down.
+        //
+        // PROVISIONAL. 10.0 is a guess -- no capture this extreme in the corpus.
+        // The trigger case was Valorant at ~27% loss / 690 hitches, all
+        // cpu_stall, on a stranger's machine. Raise it if genuine heavy-engine
+        // games (bad UE traversal streaming) trip it and the "it's the game"
+        // verdict was actually right; lower it if system-fault captures below
+        // 10% still get told their PC is fine.
+        const double ExtremeLossPct = 10.0;
+
+        // A capture only earns the "barely any stutter" verdict if it clears
+        // BOTH the SeverityFloor above AND this hitch rate. Percent of playtime
+        // lost undersells stutter badly: a 30 ms hitch is disruptive out of all
+        // proportion to the 0.05% of a minute it costs, so 14 hitches/minute can
+        // still add up to under 1% "lost" while feeling terrible. Hitches/minute.
+        //
+        // PROVISIONAL. 10.0 is anchored to one machine's observations: Gothic
+        // baseline runs at 4-8 hitches/min felt fine to play, while a
+        // CPU-contention run at 14/min was clearly noticeable. 10 sits between
+        // those, kept near the acceptable ceiling so it doesn't cry wolf. Needs
+        // validating against more captures rated by feel: raise it if runs that
+        // feel fine get flagged, lower it if choppy runs slip through.
+        const double NoticeableHitchRate = 10.0;
 
         static double Median(List<double> v)
         {
@@ -322,7 +366,7 @@ namespace StutterTest
                 if (early.Count > 10 && late.Count > 10)
                 {
                     double e = Pct(early, 0.10), l = Pct(late, 0.10);
-                    if (e > 0)
+                    if (e >= ThrottleMinGpuMs)
                     {
                         r.Drift = (l - e) / e * 100.0;
                         r.Throttle = r.Drift >= ThrottleMin && r.Drift <= ThrottleMax;
@@ -575,14 +619,17 @@ namespace StutterTest
                     "stutter. Those are different things and need different fixes.";
                 return;
             }
-            if (r.LostPct < SeverityFloor)
+            double hitchesPerMin = r.Seconds > 0
+                ? r.Hitches.Count / r.Seconds * 60.0 : 0;
+            if (r.LostPct < SeverityFloor && hitchesPerMin < NoticeableHitchRate)
             {
                 r.Headline = "Barely any stuttering.";
                 r.VClass = "good";
                 r.Verdict = string.Format(CultureInfo.InvariantCulture,
-                    "{0} small hitches, costing {1:0.00}% of your playtime. " +
-                    "That's low enough that most people wouldn't notice it.",
-                    r.Hitches.Count, r.LostPct);
+                    "{0} small hitches over {1:0} seconds — about {2:0.0} a minute, " +
+                    "costing {3:0.00}% of your playtime. That's low enough that " +
+                    "most people wouldn't notice it.",
+                    r.Hitches.Count, r.Seconds, hitchesPerMin, r.LostPct);
                 if (r.Capped)
                     r.Caveat = "Note that your frame rate is capped with about " +
                         r.Headroom.ToString("0") + "% GPU headroom, which hides some " +
@@ -593,6 +640,27 @@ namespace StutterTest
             double frac = r.TotalLost > 0 ? fix / r.TotalLost : 0;
             string top = r.ByCause.Count > 0
                 ? r.ByCause.OrderByDescending(k => k.Value).First().Key : "unattributed";
+
+            // Extreme cpu_stall loss: the attribution can't be trusted, so don't
+            // pin it on the game. Name the possibilities instead. Wins over both
+            // the fixable and the "it's the game" verdicts below.
+            if (r.LostPct > ExtremeLossPct && top == "cpu_stall")
+            {
+                r.Headline = "Something is badly wrong — and it might not be the game.";
+                r.VClass = "bad";
+                r.Verdict = string.Format(CultureInfo.InvariantCulture,
+                    "Your CPU stalled on {0} frames, costing {1:0.0}% of your playtime. " +
+                    "That is far outside normal. These timings can't tell whether it's " +
+                    "the game itself or something on your PC — background software " +
+                    "competing for the processor, CPU thermal or power throttling, a " +
+                    "driver interrupt problem, or a system misconfiguration.\r\n\r\n" +
+                    "Close background applications (a browser with many tabs, Discord, " +
+                    "streaming or recording software, a launcher mid-update, an " +
+                    "antivirus scan) and record again. If it persists, check your CPU " +
+                    "temperatures and your DPC latency.",
+                    r.Hitches.Count, r.LostPct);
+                return;
+            }
 
             if (frac >= 0.4)
             {
